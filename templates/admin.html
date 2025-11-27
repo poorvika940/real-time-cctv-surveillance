@@ -1,0 +1,209 @@
+<div class="card mb-3">
+        <div class="card-header">Debug: Snapshot Viewer</div>
+        <div class="card-body">
+          <form class="row g-2 align-items-center mb-2" onsubmit="event.preventDefault(); fetchSnapshot();">
+            <div class="col-auto">
+              <label for="snapshot-camera" class="form-label mb-0">Camera ID:</label>
+            </div>
+            <div class="col-auto">
+              <input type="number" class="form-control form-control-sm" id="snapshot-camera" value="0" min="0" style="width:80px">
+            </div>
+            <div class="col-auto">
+              <button type="submit" class="btn btn-outline-primary btn-sm">Show Snapshot</button>
+            </div>
+            <div class="col-auto">
+              <span id="snapshot-status" class="small"></span>
+            </div>
+          </form>
+          <div id="snapshot-img-wrap" style="min-height:120px">
+            <img id="snapshot-img" src="" alt="Snapshot will appear here" class="img-fluid border" style="max-width:100%; display:none;">
+          </div>
+        </div>
+      </div>
+      <script>
+        async function fetchSnapshot() {
+          const cam = document.getElementById('snapshot-camera').value;
+          const img = document.getElementById('snapshot-img');
+          const status = document.getElementById('snapshot-status');
+          img.style.display = 'none';
+          status.textContent = 'Loading...';
+          try {
+            const url = `/debug_last_frame?camera=${encodeURIComponent(cam)}`;
+            const resp = await fetch(url);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              if (blob.type.startsWith('image/')) {
+                img.src = URL.createObjectURL(blob);
+                img.style.display = '';
+                status.textContent = '';
+              } else {
+                status.textContent = 'No image returned.';
+              }
+            } else {
+              const data = await resp.json().catch(() => ({}));
+              status.textContent = data.error || 'Failed to fetch snapshot.';
+            }
+          } catch (e) {
+            status.textContent = 'Error: ' + e;
+          }
+        }
+      </script>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body class="p-3">
+    <div class="container">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="m-0">Admin Dashboard</h3>
+        <a href="/select_camera" class="btn btn-outline-secondary btn-sm">Back</a>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">Classifier</div>
+        <div class="card-body">
+          {% if not classifier.present %}
+            <p class="text-muted">No classifier persisted yet.</p>
+          {% else %}
+            <p><strong>Method:</strong> {{ classifier.method }}</p>
+            {% if classifier.classes %}
+              <p><strong>Known labels:</strong></p>
+              <ul>
+                {% for c in classifier.classes %}
+                  <li>{{ c }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if classifier_file %}
+              <p>Persisted file: <code>{{ classifier_file }}</code></p>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">Tracker Settings</div>
+        <div class="card-body">
+          <div class="mb-2">
+            <button class="btn btn-outline-primary btn-sm me-2" onclick="exportTrackerSettings()">Export</button>
+            <label class="btn btn-outline-success btn-sm mb-0">
+              Import <input type="file" id="import-tracker-file" accept="application/json" style="display:none" onchange="importTrackerSettings(event)">
+            </label>
+            <span id="import-status" class="ms-2 small"></span>
+          </div>
+          {% if tracker_settings %}
+            <pre>{{ tracker_settings|tojson(indent=2) }}</pre>
+          {% else %}
+            <p class="text-muted">No tracker settings configured.</p>
+          {% endif %}
+        </div>
+      </div>
+      <script>
+        async function exportTrackerSettings() {
+          try {
+            const resp = await fetch('/export_tracker_settings');
+            const data = await resp.json();
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'tracker_settings.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            alert('Failed to export tracker settings.');
+          }
+        }
+        async function importTrackerSettings(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          const status = document.getElementById('import-status');
+          status.textContent = 'Importing...';
+          try {
+            const text = await file.text();
+            const json = JSON.parse(text);
+            const resp = await fetch('/import_tracker_settings', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(json)
+            });
+            const data = await resp.json();
+            if (data && data.success) {
+              status.textContent = 'Import successful! Reloading...';
+              setTimeout(() => window.location.reload(), 1000);
+            } else {
+              status.textContent = 'Import failed: ' + (data && data.error ? data.error : 'Unknown error');
+            }
+          } catch (e) {
+            status.textContent = 'Import failed: ' + e;
+          }
+        }
+      </script>
+
+      <div class="card mb-3">
+        <div class="card-header">Environment</div>
+        <div class="card-body">
+          <p><strong>Model dir:</strong> <code>{{ config['MODEL_DIR'] if config and config.get('MODEL_DIR') else '-' }}</code></p>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">Debug: Last Camera Error</div>
+        <div class="card-body">
+          <div id="camera-error-msg" class="text-danger small">Loading...</div>
+          <button class="btn btn-outline-secondary btn-sm mt-2" onclick="fetchCameraError()">Refresh Error</button>
+        </div>
+      </div>
+      <script>
+        async function fetchCameraError() {
+          const el = document.getElementById('camera-error-msg');
+          el.textContent = 'Loading...';
+          try {
+            const resp = await fetch('/camera_error');
+            const data = await resp.json();
+            if (data && data.error) {
+              el.textContent = data.error + (data.timestamp ? ' (' + data.timestamp + ')' : '');
+            } else {
+              el.textContent = 'No recent camera error.';
+            }
+          } catch (e) {
+            el.textContent = 'Failed to fetch error.';
+          }
+        }
+        fetchCameraError();
+      </script>
+
+      <div class="card mb-3">
+        <div class="card-header">Tracker ID Control</div>
+        <div class="card-body">
+          <button id="refreshIdsBtn" class="btn btn-outline-danger btn-sm">Refresh Tracker IDs (start from 1)</button>
+          <span id="refreshIdsStatus" class="ms-2 small"></span>
+        </div>
+      </div>
+      <script>
+        document.getElementById('refreshIdsBtn').onclick = async function() {
+          const status = document.getElementById('refreshIdsStatus');
+          status.textContent = 'Refreshing...';
+          try {
+            const resp = await fetch('/refresh_tracker_ids', {method: 'POST'});
+            const data = await resp.json();
+            if (data && data.success) {
+              status.textContent = 'Tracker IDs reset!';
+              setTimeout(() => status.textContent = '', 2000);
+            } else {
+              status.textContent = 'Failed: ' + (data && data.message ? data.message : 'Unknown error');
+            }
+          } catch (e) {
+            status.textContent = 'Error: ' + e;
+          }
+        };
+      </script>
+    </div>
+  </body>
+</html>

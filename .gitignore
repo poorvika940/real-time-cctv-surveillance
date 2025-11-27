@@ -1,0 +1,42 @@
+# Python virtual environments
+.venv/
+.venv312/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Pytest cache
+.pytest_cache/
+
+# Local snapshots / temporary captures
+snapshots/
+
+# Dataset backups created by cleanup
+cleanup_backups/
+
+# VS Code settings
+.vscode/
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Database
+faces.db
+
+# Logs
+*.log
+*.txt
+
+# Secrets and local models
+models/vapid.json
+models/alerts.json
+models/tracker_settings.json
+models/embeddings.npz
+models/classifier.joblib
+models/face_vectors/
+
+# Dataset (optional, usually don't want to push personal photos)
+dataset/
+restores/

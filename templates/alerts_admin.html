@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Recent Alerts</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body class="p-3">
+    <div class="container">
+      <h3>Recent Alerts</h3>
+      <p class="text-muted">Shows recent unknown alerts with thumbnails. Click "Add" to pre-fill the Add Face modal.</p>
+      <div class="mb-3">
+        <a href="/admin" class="btn btn-sm btn-outline-secondary">Back to Admin</a>
+      </div>
+      <div id="alertsList" class="row gy-3">
+        {% for a in alerts %}
+        <div class="col-12 col-md-6">
+          <div class="card">
+            <div class="card-body d-flex gap-3 align-items-center">
+              {% if a.payload.image %}
+              <img src="data:image/jpeg;base64,{{ a.payload.image }}" class="img-thumbnail" style="width:120px; height:auto;" />
+              {% endif %}
+              <div class="flex-fill">
+                <div><strong>{{ a.payload.label }}</strong> {% if a.processed %}<span class="badge bg-secondary">processed</span>{% endif %}</div>
+                <div class="text-muted small">{{ a.ts }}</div>
+              </div>
+              <div class="d-flex flex-column gap-2">
+                <button class="btn btn-success btn-sm add-alert-btn" data-image="{{ a.payload.image|default('') }}" data-ts="{{ a.ts }}">Add</button>
+                <button class="btn btn-outline-primary btn-sm mark-alert-btn" data-ts="{{ a.ts }}">Mark</button>
+                <button class="btn btn-outline-danger btn-sm remove-alert-btn" data-ts="{{ a.ts }}">Remove</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Add Face modal (inline admin) -->
+      <div class="modal fade" id="alertsAddModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Add Face (Admin)</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="d-flex gap-3">
+                <img id="alertsAddPreview" src="" class="img-thumbnail" style="width:140px; display:none;" />
+                <form id="alertsAddForm" class="flex-fill">
+                  <div class="mb-2">
+                    <label class="form-label">Name</label>
+                    <input name="name" class="form-control" required />
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Profession</label>
+                    <select name="profession" class="form-select">
+                      <option>Student</option>
+                      <option>Teacher</option>
+                      <option>Non Teaching</option>
+                    </select>
+                  </div>
+                  <input type="hidden" name="camera" value="0" />
+                </form>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button id="alertsAddSave" type="button" class="btn btn-primary">Save Face</button>
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      let currentAlertB64 = null;
+
+      function b64ToBlob(b64, mime='image/jpeg') {
+        const byteChars = atob(b64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+          byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], {type: mime});
+      }
+
+      let currentAlertTS = null;
+      document.querySelectorAll('.add-alert-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const b64 = btn.getAttribute('data-image');
+          const ts = btn.getAttribute('data-ts');
+          if (!b64) {
+            alert('No image available for this alert');
+            return;
+          }
+          currentAlertB64 = b64;
+          currentAlertTS = ts;
+          const preview = document.getElementById('alertsAddPreview');
+          if (preview) { preview.src = 'data:image/jpeg;base64,' + b64; preview.style.display = ''; }
+          // open the inline modal
+          const modal = new bootstrap.Modal(document.getElementById('alertsAddModal'));
+          modal.show();
+        });
+      });
+
+      // Mark processed buttons
+      document.querySelectorAll('.mark-alert-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const ts = btn.getAttribute('data-ts');
+          if (!ts) return;
+          try {
+            const res = await fetch('/alerts/mark_processed', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ts}) });
+            const j = await res.json();
+            if (j && j.success) location.reload(); else alert('Failed');
+          } catch(e) { console.error(e); alert('Failed'); }
+        });
+      });
+
+      // Remove buttons
+      document.querySelectorAll('.remove-alert-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Remove this alert?')) return;
+          const ts = btn.getAttribute('data-ts');
+          if (!ts) return;
+          try {
+            const res = await fetch('/alerts/remove', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ts}) });
+            const j = await res.json();
+            if (j && j.success) location.reload(); else alert('Failed');
+          } catch(e) { console.error(e); alert('Failed'); }
+        });
+      });
+
+      // Handle save button in modal
+      document.getElementById('alertsAddSave').addEventListener('click', async () => {
+        const form = document.getElementById('alertsAddForm');
+        const name = form.name.value && form.name.value.trim();
+        const profession = form.profession.value || 'Student';
+        if (!name) { alert('Please enter a name'); return; }
+        if (!currentAlertB64) { alert('No image available'); return; }
+        try {
+          const fd = new FormData();
+          const blob = b64ToBlob(currentAlertB64);
+          fd.append('image', blob, 'alert.jpg');
+          fd.append('name', name);
+          fd.append('profession', profession);
+          // post to /add_face
+          const res = await fetch('/add_face', { method: 'POST', body: fd });
+          const j = await res.json();
+          if (j && j.success) {
+            alert('Face added');
+            // hide modal
+            bootstrap.Modal.getInstance(document.getElementById('alertsAddModal')).hide();
+            // mark processed for this alert
+            try {
+              if (currentAlertTS) {
+                await fetch('/alerts/mark_processed', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ts: currentAlertTS}) });
+              }
+            } catch {}
+            currentAlertB64 = null; currentAlertTS = null;
+            // reload to reflect saved state
+            location.reload();
+          } else {
+            alert('Add failed: ' + (j && j.error ? j.error : 'unknown error'));
+          }
+        } catch (e) {
+          console.error(e);
+          alert('Failed to add face');
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Live Stream</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      .controls { margin-top: 8px; }
+      #video-box { width: 100%; max-width: 800px; }
+    </style>
+  </head>
+  <body class="p-3">
+    <!-- Unknown Face Popup Modal (moved inside body) -->
+    <div class="modal fade" id="unknownFaceModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Unknown Face Detected</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex gap-3 align-items-start">
+              <img id="unknownFaceImg" src="" alt="unknown" class="img-thumbnail" style="max-width:140px; display:none;">
+              <div>
+                <p id="unknownFaceMsg">An unknown face has been detected in the frame.</p>
+                <div class="mt-2">
+                  <button id="unknownAddBtn" type="button" class="btn btn-success btn-sm">Add Face</button>
+                  <button id="unknownIgnoreBtn" type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Ignore</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div class="d-flex align-items-center gap-3 mb-2">
+        <h3 class="m-0">Live Stream (camera: {{ camera }})</h3>
+      </div>
+      <div class="position-relative">
+        <img id="video-box" src="{{ url_for('video_feed') }}?camera={{ camera }}{% if backend %}&backend={{ backend }}{% endif %}{% if device %}&device={{ device }}{% endif %}{% if frame_skip %}&frame_skip={{ frame_skip }}{% endif %}" alt="video stream" class="img-fluid border">
+        <div id="stream-error-banner" class="alert alert-danger position-absolute top-0 start-50 translate-middle-x mt-2" style="display:none; z-index:10; min-width:300px;">
+          <span id="stream-error-msg"></span>
+        </div>
+        <div id="stream-spinner" class="position-absolute top-50 start-50 translate-middle" style="display:none; z-index:10;">
+          <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+        </div>
+      </div>
+      <!-- Scripts moved to end of body for reliability -->
+
+      <div class="controls d-flex gap-2">
+  <!-- No snapshot or manual add face button; add face is triggered from unknown popup -->
+        <button id="trainBtn" class="btn btn-warning">
+          <span id="trainSpinner" class="spinner-border spinner-border-sm me-1" role="status" style="display:none"></span>
+          <span id="trainLabel">Train Model</span>
+        </button>
+        <div class="form-check align-self-center ms-2">
+          <input class="form-check-input" type="checkbox" value="" id="showIdsCheck" {% if show_ids %}checked{% endif %}>
+          <label class="form-check-label small" for="showIdsCheck">Show IDs</label>
+        </div>
+        <div class="form-check align-self-center ms-2">
+          <input class="form-check-input" type="checkbox" value="" id="muteAudio" >
+          <label class="form-check-label small" for="muteAudio">Mute Alerts</label>
+        </div>
+        <div class="form-check align-self-center ms-2">
+          <input class="form-check-input" type="checkbox" value="" id="desktopNotify" >
+          <label class="form-check-label small" for="desktopNotify">Desktop Notifications</label>
+        </div>
+        <div class="d-flex align-items-center ms-2">
+          <button id="rotateVapidBtn" class="btn btn-sm btn-outline-danger" title="Regenerate VAPID keys and clear subscriptions">Rotate VAPID</button>
+        </div>
+        <div class="d-flex align-items-center ms-2">
+          <button id="trackerConfigBtn" class="btn btn-sm btn-outline-primary">Tracker Settings</button>
+        </div>
+        <button id="uploadFaceBtn" class="btn btn-outline-success">Upload Face</button>
+          <button id="triggerAlertBtn" class="btn btn-danger" style="display:none;">Trigger Alert</button>
+        <a href="/select_camera" class="btn btn-outline-secondary">Back</a>
+      </div>
+
+      <!-- Debug status panel -->
+      <div id="debugStatus" style="position:fixed;left:12px;bottom:12px;z-index:3000;background:rgba(0,0,0,0.6);color:#fff;padding:8px 12px;border-radius:6px;font-size:13px;">
+        <div><strong>Socket:</strong> <span id="dbg-socket">connecting...</span></div>
+        <div><strong>SW:</strong> <span id="dbg-sw">unknown</span></div>
+        <div><strong>Notify:</strong> <span id="dbg-notify">unknown</span></div>
+        <div><strong>VAPID:</strong> <span id="dbg-vapid">pending</span></div>
+        <div><strong>Push:</strong> <span id="dbg-push">idle</span></div>
+      </div>
+
+      <!-- Add Face Modal -->
+      <div class="modal fade" id="addFaceModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Add Face</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="addFaceForm">
+                <div class="mb-3">
+                  <label class="form-label">Name</label>
+                  <input name="name" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Profession</label>
+                  <select name="profession" class="form-select">
+                    <option>Student</option>
+                    <option>Teacher</option>
+                    <option>Non Teaching</option>
+                  </select>
+                </div>
+                <input type="hidden" name="camera" value="{{ camera }}">
+                <input type="hidden" name="track_id" id="addFaceTrackId" value="">
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-primary">Save Face</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bulk upload modal removed for simplicity -->
+
+      <!-- Upload face modal -->
+      <div class="modal fade" id="uploadFaceModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Upload Face</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="uploadFaceForm">
+                <div class="mb-3">
+                  <label class="form-label">Name</label>
+                  <input type="text" class="form-control" name="name" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Profession</label>
+                  <select name="profession" class="form-select">
+                    <option>Student</option>
+                    <option>Teacher</option>
+                    <option>Non Teaching</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Face Image</label>
+                  <input type="file" class="form-control" name="image" accept="image/*" required>
+                </div>
+                <input type="hidden" name="camera" value="{{ camera }}">
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-primary">Upload</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Select face modal (shows faces found in snapshot and lets admin pick unknowns) -->
+      <!-- Select face modal removed: only Add Face from unknown popup is allowed -->
+
+      <!-- Tracker Settings Modal -->
+      <div class="modal fade" id="trackerSettingsModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Tracker Settings</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="trackerSettingsForm">
+                <div class="mb-2">
+                  <label class="form-label small">IoU threshold</label>
+                  <input id="iouInput" name="iou_threshold" class="form-control form-control-sm" type="number" step="0.05" min="0" max="1">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Max missed frames</label>
+                  <input id="maxMissedInput" name="max_missed" class="form-control form-control-sm" type="number" min="1" max="60">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Alert cooldown (s)</label>
+                  <input id="cooldownInput" name="alert_cooldown" class="form-control form-control-sm" type="number" step="0.5" min="0">
+                </div>
+                <input type="hidden" name="camera" value="{{ camera }}">
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <audio id="alertAudio">
+      <source src="/static/alert.mp3" type="audio/mpeg">
+    </audio>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js" integrity="" crossorigin="anonymous"></script>
+    <script>
+      // Track whether push subscription failed so we can fall back to in-page notifications
+      let PUSH_FALLBACK = !('serviceWorker' in navigator) || !('PushManager' in window);
+      // tracker modal wiring
+      const trackerSettingsBtn = document.getElementById('trackerConfigBtn');
+      const trackerSettingsModalEl = document.getElementById('trackerSettingsModal');
+      const trackerSettingsModal = trackerSettingsModalEl ? new bootstrap.Modal(trackerSettingsModalEl) : null;
+      if (trackerSettingsBtn && trackerSettingsModal) trackerSettingsBtn.addEventListener('click', () => {
+  // populate fields from server-provided tracker_settings
+  const s = (window._tracker_settings = JSON.parse('{{ tracker_settings|tojson|safe }}')) || {};
+  document.getElementById('iouInput').value = s.iou_threshold || 0.3;
+  document.getElementById('maxMissedInput').value = s.max_missed || 5;
+  document.getElementById('cooldownInput').value = s.alert_cooldown || 5.0;
+  trackerSettingsModal.show();
+      });
+
+      document.getElementById('trackerSettingsForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const res = await fetch('/tracker_config', { method: 'POST', body: fd });
+        const j = await res.json();
+        if (j.success) {
+          alert('Tracker settings saved');
+          trackerSettingsModal.hide();
+          // reload to apply
+          location.reload();
+        } else {
+          alert('Save failed: ' + (j.error || ''));
+        }
+      });
+
+      // show IDs toggle: send setting to server so the generator can pick it up without a reload
+      const showIdsCheck = document.getElementById('showIdsCheck');
+      if (showIdsCheck) {
+        showIdsCheck.addEventListener('change', async () => {
+          const fd = new FormData();
+          fd.append('camera', '{{ camera }}');
+          fd.append('show_ids', showIdsCheck.checked ? '1' : '0');
+          await fetch('/tracker_config', { method: 'POST', body: fd });
+        });
+
+      }
+
+      // Desktop notification checkbox: request permission when user enables it
+      const desktopNotifyCheck = document.getElementById('desktopNotify');
+      if (desktopNotifyCheck) {
+        desktopNotifyCheck.addEventListener('change', (e) => {
+          if (desktopNotifyCheck.checked && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(()=>{});
+          }
+        });
+      }
+
+      // Helper: try to enable/request notification permission proactively when a socket connects
+      async function ensureNotificationPermission() {
+        try {
+          if (!('Notification' in window)) return false;
+          if (Notification.permission === 'granted') {
+            if (desktopNotifyCheck) desktopNotifyCheck.checked = true;
+            return true;
+          }
+          if (Notification.permission === 'default') {
+            // Request permission in a non-blocking way
+            const perm = await Notification.requestPermission().catch(()=>'denied');
+            if (perm === 'granted') {
+              if (desktopNotifyCheck) desktopNotifyCheck.checked = true;
+              try { if (_sw_registration) subscribePush().catch(()=>{}); } catch(e){}
+              return true;
+            }
+          }
+        } catch (e) { console.warn('ensureNotificationPermission failed', e); }
+        return false;
+      }
+
+      // Register service worker to enable actionable notifications when supported
+      let _sw_registration = null;
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').then(reg => {
+          console.log('Service worker registered', reg);
+          _sw_registration = reg;
+          try { document.getElementById('dbg-sw').textContent = 'registered'; } catch(e){}
+          // Try to subscribe for push when SW is ready
+          try { if (_sw_registration) subscribePush().catch(()=>{}); } catch(e){}
+          // Fetch and display public VAPID key for debugging
+          fetch('/vapid_public_key').then(r=>r.json()).then(j=>{
+             try {
+               if (j && j.publicKey) {
+                 document.getElementById('dbg-vapid').textContent = (j.generated ? 'GEN ' : '') + j.publicKey.slice(0,22) + '…';
+               } else {
+                 document.getElementById('dbg-vapid').textContent = 'missing';
+               }
+             } catch(e) {}
+          }).catch(()=>{ try{ document.getElementById('dbg-vapid').textContent='error'; }catch(e){} });
+        }).catch(e => { console.warn('SW registration failed', e); });
+
+        // Listen for messages from the SW (alert payloads forwarded on click)
+        navigator.serviceWorker.addEventListener('message', (ev) => {
+          try {
+            const msg = ev.data || {};
+            if (msg.type === 'alert_notification' && msg.data) {
+              // set session storage so the stream/add face modal can pick it up
+              try { sessionStorage.setItem('admin_alert_image', msg.data.image || ''); } catch(e) {}
+              // if action requested was 'add', open add-face modal when in the stream
+              if (msg.action === 'add' && document.getElementById('addFaceModal')) {
+                window.latestFaceBlob = msg.data.image ? base64ToBlob(msg.data.image) : null;
+                // Also propagate track id into the form and temp state
+                try {
+                  const CAMERA_ID = '{{ camera }}';
+                  if (typeof msg.data.track_id !== 'undefined' && msg.data.track_id !== null) {
+                    window.latestTrackId = msg.data.track_id;
+                    const trackInput = document.getElementById('addFaceTrackId');
+                    if (trackInput) trackInput.value = String(msg.data.track_id);
+                    window.latestTrackKey = `${CAMERA_ID}::${String(msg.data.track_id)}`;
+                  }
+                } catch(e) {}
+                new bootstrap.Modal(document.getElementById('addFaceModal')).show();
+              }
+            }
+          } catch (e) { console.warn('SW message handling failed', e); }
+        });
+      }
+
+  // Try to proactively request notification permission on page load (non-blocking).
+      // Some browsers will show the permission prompt; if denied, we fallback to in-page toast.
+      (function tryRequestPermissionOnLoad() {
+        try {
+          if (!('Notification' in window)) return;
+          // Only request if still default (not already allowed/denied)
+          if (Notification.permission === 'default') {
+            // Delay a bit so the page finishes loading and SW registration runs
+            setTimeout(() => {
+              Notification.requestPermission().then((perm) => {
+                  console.log('Notification permission on load:', perm);
+                  try { document.getElementById('dbg-notify').textContent = perm; } catch(e){}
+                  if (perm === 'granted') {
+                    if (desktopNotifyCheck) desktopNotifyCheck.checked = true;
+                  }
+                }).catch((e) => { console.warn('requestPermission on load failed', e); });
+            }, 800);
+          }
+        } catch (e) { console.warn('tryRequestPermissionOnLoad failed', e); }
+      })();
+
+      function base64ToBlob(base64, mime='image/jpeg') {
+        const byteChars = atob(base64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+          byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], {type: mime});
+      }
+
+      // Helper to convert base64 (URL-safe) VAPID key to Uint8Array for subscription
+      function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      }
+
+      // Subscribe the service worker to Push and send subscription to server
+      async function subscribePush() {
+        try {
+          if (!('PushManager' in window)) return;
+          if (!_sw_registration) return;
+          // check existing
+          let sub = await _sw_registration.pushManager.getSubscription();
+          if (!sub) {
+            // fetch public key from server
+            const resp = await fetch('/vapid_public_key');
+            const j = await resp.json().catch(()=>null);
+            if (!j || !j.publicKey) {
+              console.warn('No VAPID public key available on server');
+              return;
+            }
+            const applicationServerKey = urlBase64ToUint8Array(j.publicKey);
+            sub = await _sw_registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+          }
+          // send to server
+          const resp2 = await fetch('/subscribe_push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub) });
+          const reply = await resp2.json().catch(()=>({success:false}));
+          if (!resp2.ok || !reply || reply.success === false) {
+            const msg = (reply && reply.message) ? reply.message : (reply && reply.error ? reply.error : 'Subscription rejected');
+            console.warn('Push subscription failed:', msg);
+            try { document.getElementById('dbg-push').textContent = 'fallback'; } catch(e) {}
+            PUSH_FALLBACK = true;
+            if (msg && msg.toLowerCase().includes('windows notification service')) {
+              alert('Edge is using Windows Notification Service (legacy). Allow desktop notifications when prompted to use fallback alerts.');
+            }
+            await ensureNotificationPermission();
+            return;
+          }
+          console.log('Push subscription registered with server');
+          try { document.getElementById('dbg-push').textContent = 'push active'; } catch(e) {}
+          PUSH_FALLBACK = false;
+        } catch (e) { console.warn('subscribePush failed', e); }
+      }
+
+      // Rotate VAPID keys button handler
+      (function wireRotateVapid(){
+        const btn = document.getElementById('rotateVapidBtn');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          if (!confirm('Rotate VAPID keys and clear subscriptions? Browsers must re-subscribe. Continue?')) return;
+          try {
+            const resp = await fetch('/rotate_vapid', { method: 'POST' });
+            const j = await resp.json().catch(()=>null);
+            if (j && j.success) {
+              alert('VAPID keys rotated. Reloading to re-subscribe.');
+              location.reload();
+            } else {
+              alert('Rotate failed: ' + (j && j.error ? j.error : 'server error'));
+            }
+          } catch(e){ alert('Rotate error: ' + e); }
+        });
+      })();
+
+  async function selectFaceForAdd(faceObj, idx) {
+  }
+
+  document.getElementById('addFaceForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const fd = new FormData();
+        if (window.latestFaceBlob) {
+          fd.append('image', window.latestFaceBlob, 'face.jpg');
+        } else {
+          alert('No face image available. Please use the Add Face button from the unknown popup.');
+          return;
+        }
+        fd.append('name', form.name.value);
+        fd.append('profession', form.profession.value);
+        // include camera and optional track id so server can mark track as processed and retrain
+        try { fd.append('camera', form.camera ? form.camera.value : '{{ camera }}'); } catch(e) { fd.append('camera', '{{ camera }}'); }
+        try { if (window.latestTrackId) fd.append('track_id', window.latestTrackId); else { const tid = document.getElementById('addFaceTrackId'); if (tid && tid.value) fd.append('track_id', tid.value); } } catch(e) {}
+        const res = await fetch('/add_face', { method: 'POST', body: fd });
+        const j = await res.json().catch(()=>({success:false}));
+        if (j && j.success) {
+          try { const modalEl = document.getElementById('addFaceModal'); const modal = bootstrap.Modal.getOrCreateInstance(modalEl); modal.hide(); } catch(e){}
+          try {
+            const rr = j.retrain || {};
+            if (rr && rr.success) {
+              alert('Face added and model retrained — should be recognized now.');
+            } else {
+              alert('Face added but retrain failed: ' + (rr && rr.error ? rr.error : JSON.stringify(rr)));
+            }
+          } catch(e) { alert('Face added'); }
+          window.latestFaceBlob = null;
+          // mark the alert as acknowledged/shown to prevent further popups for this person
+          try {
+            if (window.latestTrackKey) {
+              window._shownTrackAlerts = window._shownTrackAlerts || {};
+              window._shownTrackAlerts[window.latestTrackKey] = true;
+              try { sessionStorage.setItem('_shownTrackAlerts', JSON.stringify(window._shownTrackAlerts)); } catch(e) {}
+            }
+          } catch(e){}
+          window.latestTrackId = null;
+          window.latestTrackKey = null;
+          const tidInput = document.getElementById('addFaceTrackId'); if (tidInput) tidInput.value = '';
+        } else {
+          alert('Error adding face: ' + (j && j.error ? j.error : 'unknown'));
+        }
+      });
+
+      // Upload face modal wiring
+      (function setupUploadFaceForm(){
+        const uploadBtn = document.getElementById('uploadFaceBtn');
+        const uploadModalEl = document.getElementById('uploadFaceModal');
+        const uploadForm = document.getElementById('uploadFaceForm');
+        let uploadModal = null;
+        if (uploadModalEl) {
+          uploadModal = new bootstrap.Modal(uploadModalEl);
+        }
+        if (uploadBtn && uploadModal) {
+          uploadBtn.addEventListener('click', () => {
+            try { uploadForm && uploadForm.reset(); } catch(e) {}
+            uploadModal.show();
+          });
+        }
+        if (uploadForm) {
+          uploadForm.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const fileInput = uploadForm.querySelector('input[name="image"]');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+              alert('Please select an image to upload.');
+              return;
+            }
+            const submitBtn = uploadForm.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+            try {
+              const fd = new FormData(uploadForm);
+              const res = await fetch('/upload_face', { method: 'POST', body: fd });
+              const j = await res.json().catch(()=>null);
+              if (j && j.success) {
+                alert('Face uploaded and model updated.');
+                uploadForm.reset();
+                if (uploadModal) uploadModal.hide();
+              } else {
+                alert('Upload failed: ' + (j && j.error ? j.error : 'server error'));
+              }
+            } catch(err) {
+              alert('Upload request failed: ' + err);
+            } finally {
+              if (submitBtn) submitBtn.disabled = false;
+            }
+          });
+        }
+      })();
+
+      // Train button: try to trigger server-side retrain if available, otherwise show a short UI feedback
+      trainBtn.addEventListener('click', async () => {
+        const spinner = document.getElementById('trainSpinner');
+        const label = document.getElementById('trainLabel');
+        try {
+          trainBtn.disabled = true;
+          spinner.style.display = '';
+          label.textContent = 'Training...';
+          // attempt to call a /retrain endpoint if the server exposes it
+          let ok = false;
+          try {
+            const res = await fetch('/retrain', { method: 'POST' });
+            const j = await res.json().catch(()=>null);
+            if (j && j.success) ok = true;
+          } catch (e) {
+            // ignore network errors
+          }
+          if (ok) {
+            label.textContent = 'Trained';
+          } else {
+            label.textContent = 'Train (manual)';
+          }
+        } catch (e) {
+          console.warn('trainBtn failed', e);
+        } finally {
+          spinner.style.display = 'none';
+          trainBtn.disabled = false;
+          setTimeout(()=>{ document.getElementById('trainLabel').textContent = 'Train Model'; }, 1200);
+        }
+      });
+
+      // Socket.IO connection for real-time alerts (connect to '/alerts' namespace)
+      try {
+        const socket = io('/alerts');
+        // keep a client-side set of shown alert keys (camera+track or camera+label) to avoid duplicate modals
+        try {
+          const _stored = sessionStorage.getItem('_shownTrackAlerts');
+          window._shownTrackAlerts = _stored ? JSON.parse(_stored) : {};
+        } catch(e) { window._shownTrackAlerts = {}; }
+        const CAMERA_ID = '{{ camera }}';
+        socket.on('connect', async () => {
+          console.log('socket connected', socket.id);
+          try { document.getElementById('dbg-socket').textContent = 'connected (' + socket.id + ')'; } catch(e){}
+          // Try to request/enable notifications so alerts will pop automatically
+          try { await ensureNotificationPermission(); } catch(e) { console.warn('notify enable on connect failed', e); }
+          // Merge server-side acked dedupe keys into this client's sessionStorage so all clients share ack state
+          try {
+            const resp = await fetch('/api/dedupe');
+            const j = await resp.json().catch(()=>null);
+            if (j && j.acks) {
+              window._shownTrackAlerts = window._shownTrackAlerts || {};
+              j.acks.forEach(a => { if (a && a.track_key) window._shownTrackAlerts[a.track_key] = true; });
+              try { sessionStorage.setItem('_shownTrackAlerts', JSON.stringify(window._shownTrackAlerts)); } catch(e){}
+            }
+          } catch(e) { console.warn('fetch server dedupe failed', e); }
+        });
+        socket.on('disconnect', (reason) => { try { document.getElementById('dbg-socket').textContent = 'disconnected: ' + reason; } catch(e){} });
+        socket.on('connect_error', (err) => { console.warn('socket connect_error', err); try { document.getElementById('dbg-socket').textContent = 'connect_error'; } catch(e){} });
+        socket.on('connect_timeout', (timeout) => { console.warn('socket connect_timeout', timeout); try { document.getElementById('dbg-socket').textContent = 'connect_timeout'; } catch(e){} });
+        socket.io.on('reconnect_attempt', (attempt) => { console.log('reconnect_attempt', attempt); try { document.getElementById('dbg-socket').textContent = 'reconnect_attempt ' + attempt; } catch(e){} });
+        socket.on('reconnect_failed', () => { console.warn('reconnect_failed'); try { document.getElementById('dbg-socket').textContent = 'reconnect_failed'; } catch(e){} });
+        socket.on('reconnect_error', (err) => { console.warn('reconnect_error', err); try { document.getElementById('dbg-socket').textContent = 'reconnect_error'; } catch(e){} });
+        socket.on('reconnect', (attempt) => { console.log('reconnected after', attempt); try { document.getElementById('dbg-socket').textContent = 'reconnected ' + attempt; } catch(e){} });
+        socket.on('alert', (data) => {
+          // If this alert has a track_id and we've already shown it, ignore to avoid repeated popups
+          try {
+            const tid = data && (data.track_id || data.trackId || data.track) ? String(data.track_id || data.trackId || data.track) : null;
+            // create a stable key per camera + track id (fallback to camera+label if no track id)
+            const tkey = tid ? `${CAMERA_ID}::${tid}` : `${CAMERA_ID}::${(data && data.label) ? String(data.label).toLowerCase() : 'unknown'}`;
+            if (window._shownTrackAlerts[tkey]) {
+              // still play sound and show brief debug overlay but don't show modal again
+              playAlert();
+              let dbg2 = document.createElement('div'); dbg2.style.position='fixed'; dbg2.style.top='10px'; dbg2.style.left='10px'; dbg2.style.zIndex=9998; dbg2.style.background='rgba(255,255,255,0.9)'; dbg2.style.padding='6px 10px'; dbg2.style.border='1px solid #333'; dbg2.textContent = 'Duplicate alert suppressed for track ' + tid; document.body.appendChild(dbg2); setTimeout(()=>dbg2.remove(), 1200);
+              return;
+            }
+            // mark as shown immediately (will be persisted in sessionStorage)
+            window._shownTrackAlerts[tkey] = true;
+            try { sessionStorage.setItem('_shownTrackAlerts', JSON.stringify(window._shownTrackAlerts)); } catch(e) {}
+          } catch (e) { console.warn('track dedupe failed', e); }
+          // Only show the unknown-face modal when the label contains 'unknown'
+              if (data && data.label && String(data.label).toLowerCase().includes('unknown')) {
+            try {
+              const adminB64 = sessionStorage.getItem('admin_alert_image');
+              if (adminB64) {
+                window.latestFaceBlob = base64ToBlob(adminB64);
+                sessionStorage.removeItem('admin_alert_image');
+                const imgEl = document.getElementById('unknownFaceImg');
+                if (imgEl) { imgEl.src = 'data:image/jpeg;base64,' + adminB64; imgEl.style.display = ''; }
+              }
+            } catch(e) {}
+            try {
+              const imgEl = document.getElementById('unknownFaceImg');
+              if (data.image && imgEl) {
+                imgEl.src = 'data:image/jpeg;base64,' + data.image;
+                imgEl.style.display = '';
+                window.latestFaceBlob = base64ToBlob(data.image);
+              } else if (imgEl) {
+                imgEl.style.display = 'none';
+                window.latestFaceBlob = null;
+              }
+              const msg = document.getElementById('unknownFaceMsg');
+              if (msg) msg.textContent = (data.label && data.label !== 'Unknown') ? data.label : 'An unknown face has been detected in the frame.';
+              const addBtn = document.getElementById('unknownAddBtn');
+                  if (addBtn) addBtn.onclick = function() { 
+                    // attach track id (if provided) to the Add Face form so the server can suppress further alerts for this track
+                    try {
+                      const tid = data.track_id || '';
+                      const trackInput = document.getElementById('addFaceTrackId');
+                      if (trackInput) trackInput.value = tid;
+                      window.latestTrackId = tid;
+                      // remember the key for this pending add so we can persist the shown flag after successful add
+                      window.latestTrackKey = tid ? `${CAMERA_ID}::${tid}` : `${CAMERA_ID}::${(data && data.label) ? String(data.label).toLowerCase() : 'unknown'}`;
+                    } catch(e){}
+                    new bootstrap.Modal(document.getElementById('addFaceModal')).show(); 
+                    bootstrap.Modal.getInstance(document.getElementById('unknownFaceModal'))?.hide(); 
+                  };
+            } catch (e) { console.warn('prepare unknown modal failed', e); }
+            setTimeout(()=>{ new bootstrap.Modal(document.getElementById('unknownFaceModal')).show(); }, 150);
+          }
+          // debug overlay
+          let dbg = document.getElementById('debug-alert-overlay');
+          if (!dbg) {
+            dbg = document.createElement('div'); dbg.id = 'debug-alert-overlay'; dbg.style.position='fixed'; dbg.style.top='10px'; dbg.style.right='10px'; dbg.style.zIndex=9999; dbg.style.background='rgba(255,255,0,0.95)'; dbg.style.color='#000'; dbg.style.padding='12px 18px'; dbg.style.border='2px solid #333'; dbg.style.fontWeight='bold'; dbg.style.fontSize='1.2em'; dbg.style.borderRadius='8px'; document.body.appendChild(dbg);
+          }
+          dbg.textContent = 'ALERT EVENT: ' + (data.label || 'Unknown') + (data.image ? ' (image)' : ' (no image)');
+          setTimeout(()=>{ dbg.remove(); }, 4000);
+          console.log('alert', data);
+          playAlert();
+            try {
+              if (PUSH_FALLBACK) {
+                if ('Notification' in window && Notification.permission === 'granted') {
+                  showDesktopNotification(data);
+                } else {
+                  const notifyEnabled = document.getElementById('desktopNotify') && document.getElementById('desktopNotify').checked;
+                  if (notifyEnabled && 'Notification' in window && Notification.permission === 'default') {
+                    Notification.requestPermission().then((perm) => { if (perm === 'granted') showDesktopNotification(data); }).catch(()=>{});
+                  }
+                }
+              }
+            } catch (e) { console.warn('desktop notify failed', e); }
+          try {
+            if (PUSH_FALLBACK) {
+              const toastHtml = (window.showAlertToast && typeof window.showAlertToast === 'function');
+              if (toastHtml) { window.showAlertToast(data); }
+            }
+          } catch (e) { console.warn('toast suppressed/failure', e); }
+        });
+
+        // Listen for retrain completion events and notify the user
+        socket.on('retrain_complete', (info) => {
+          console.log('retrain_complete', info);
+          try {
+            const msg = info && info.success ? 'Model retrain complete' : ('Retrain failed: ' + (info && info.error));
+            // show a short toast
+            const container = document.createElement('div');
+            container.style.position = 'fixed'; container.style.bottom='16px'; container.style.left='50%'; container.style.transform='translateX(-50%)'; container.style.zIndex=9999;
+            container.innerHTML = `<div class="alert ${info && info.success ? 'alert-success' : 'alert-danger'}" role="alert">${msg}</div>`;
+            document.body.appendChild(container);
+            setTimeout(()=>{ container.remove(); }, 4000);
+          } catch(e) { console.warn('retrain UI update failed', e); }
+        });
+        // When server notifies that a face was added, ensure client-side dedupe marks it shown
+        socket.on('face_added', (info) => {
+          try {
+            const cam = info && info.camera ? String(info.camera) : CAMERA_ID;
+            const tid = info && info.track_id ? String(info.track_id) : null;
+            const key = tid ? `${cam}::${tid}` : `${cam}::${(info && info.name) ? String(info.name).toLowerCase() : 'unknown'}`;
+            window._shownTrackAlerts = window._shownTrackAlerts || {};
+            window._shownTrackAlerts[key] = true;
+            try { sessionStorage.setItem('_shownTrackAlerts', JSON.stringify(window._shownTrackAlerts)); } catch(e){}
+            // if this was the track we just added and the Add Face modal is open, close it
+            try {
+              if (window.latestTrackKey === key) {
+                const modalEl = document.getElementById('addFaceModal'); const modal = bootstrap.Modal.getOrCreateInstance(modalEl); modal.hide();
+                window.latestTrackKey = null; window.latestTrackId = null; window.latestFaceBlob = null;
+              }
+            } catch(e){}
+          } catch(e) { console.warn('face_added handler failed', e); }
+        });
+      } catch (e) { console.warn('SocketIO not available', e); }
+    </script>
+    <!-- Scripts moved here for reliability -->
+    <script>
+      // Play alert sound for unknown face
+      function playAlert() {
+        const audio = document.getElementById('alertAudio');
+        try {
+          const mute = document.getElementById('muteAudio') && document.getElementById('muteAudio').checked;
+          if (mute) return;
+        } catch(e) {}
+        if (audio) {
+          audio.currentTime = 0;
+          audio.play().catch(()=>{});
+        }
+      }
+      // show a native desktop notification; prefer service-worker notifications with actions when available
+      function showDesktopNotification(data) {
+        try {
+          const title = data && data.label ? data.label : 'Unknown face detected';
+          const body = 'Click to open the stream';
+          const DEFAULT_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8AIAwMAsgG8bKzT/QAAAABJRU5ErkJggg==';
+          const icon = (data && data.image) ? ('data:image/jpeg;base64,' + data.image) : DEFAULT_ICON;
+
+          // If service worker registration is ready, use it to show a notification with actions
+          if (_sw_registration && _sw_registration.showNotification) {
+            const opts = {
+              body: body,
+              icon: icon,
+              data: { image: data.image, label: data.label, track_id: data.track_id || null },
+              requireInteraction: true,
+              tag: 'unknown-face-alert',
+              actions: [
+                { action: 'open', title: 'Open Stream' },
+                { action: 'add', title: 'Add Face' }
+              ]
+            };
+            _sw_registration.showNotification(title, opts).catch(e => { console.warn('sw showNotification failed', e); });
+            return;
+          }
+
+          // Fallback to in-page Notification API
+          const opts = { body: body, icon: icon, requireInteraction: true };
+          const n = new Notification(title, opts);
+          n.onclick = function(ev) {
+            try { window.focus(); window.location.href = window.location.href; } catch(e){}
+            n.close();
+          };
+        } catch (e) { console.warn('create Notification failed', e); }
+      }
+      // Ensure a toast popup for unknown faces
+      window.showAlertToast = function(data) {
+        let toastEl = document.getElementById('unknownToast');
+        if (!toastEl) {
+          const container = document.createElement('div');
+          container.innerHTML = `
+            <div id="unknownToast" class="toast align-items-center text-bg-warning border-0 position-fixed bottom-0 end-0 m-4" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="10000" style="z-index: 2000; min-width: 260px;">
+              <div class="d-flex">
+                <div class="toast-body"></div>
+                <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+            </div>`;
+          document.body.appendChild(container);
+          toastEl = document.getElementById('unknownToast');
+        }
+        const body = toastEl.querySelector('.toast-body');
+        body.innerHTML = '';
+        if (data.image) {
+          const img = document.createElement('img');
+          img.src = 'data:image/jpeg;base64,' + data.image;
+          img.className = 'img-thumbnail mb-2';
+          img.style.maxWidth = '120px';
+          body.appendChild(img);
+        }
+        const label = document.createElement('div');
+        label.textContent = data.label ? `${data.label} detected` : 'Unknown detected';
+        body.appendChild(label);
+        if (data.image) {
+          const btn = document.createElement('button');
+          btn.className = 'btn btn-success btn-sm mt-2';
+          btn.textContent = 'Add Face';
+          btn.onclick = function() {
+            // Open Add Face modal with image pre-filled
+            window.latestFaceBlob = base64ToBlob(data.image);
+            new bootstrap.Modal(document.getElementById('addFaceModal')).show();
+            // Hide toast
+            const t = bootstrap.Toast.getOrCreateInstance(toastEl);
+            t.hide();
+          };
+          body.appendChild(btn);
+        }
+        const t = bootstrap.Toast.getOrCreateInstance(toastEl);
+        t.show();
+      };
+      // Show spinner while video is loading
+      const videoBox = document.getElementById('video-box');
+      const streamSpinner = document.getElementById('stream-spinner');
+      const streamErrorBanner = document.getElementById('stream-error-banner');
+      const streamErrorMsg = document.getElementById('stream-error-msg');
+      let streamErrorTimer = null;
+      function showStreamSpinner(show) {
+        if (streamSpinner) streamSpinner.style.display = show ? '' : 'none';
+      }
+      function showStreamError(msg) {
+        if (streamErrorBanner && streamErrorMsg) {
+          streamErrorMsg.textContent = msg;
+          streamErrorBanner.style.display = '';
+          if (streamErrorTimer) clearTimeout(streamErrorTimer);
+          streamErrorTimer = setTimeout(() => { streamErrorBanner.style.display = 'none'; }, 6000);
+        }
+      }
+      if (videoBox) {
+        showStreamSpinner(true);
+        videoBox.addEventListener('load', () => {
+          showStreamSpinner(false);
+        });
+        videoBox.addEventListener('error', () => {
+          showStreamSpinner(false);
+          showStreamError('Camera stream could not be loaded. Check camera connection or backend.');
+        });
+      }
+      // Poll for camera error if stream is blank
+      setTimeout(async () => {
+        if (videoBox && videoBox.naturalWidth === 0) {
+          try {
+            const resp = await fetch('/camera_error');
+            const data = await resp.json();
+            if (data && data.error) showStreamError('Camera error: ' + data.error);
+          } catch {}
+        }
+      }, 3000);
+      // Live update of debug status
+      setInterval(() => {
+        try { document.getElementById('dbg-notify').textContent = (('Notification' in window) ? Notification.permission : 'unsupported'); } catch(e){}
+        try { document.getElementById('dbg-sw').textContent = (_sw_registration ? 'registered' : 'not-registered'); } catch(e){}
+      }, 1500);
+      // Test trigger button (client-side) to simulate an unknown alert
+      const triggerAlertBtn = document.getElementById('triggerAlertBtn');
+      if (triggerAlertBtn) {
+        triggerAlertBtn.addEventListener('click', () => {
+          const sample = { label: 'Unknown', image: null };
+          // Try to capture latestFaceBlob as image if available
+          if (window.latestFaceBlob) {
+            // convert blob to base64 for display
+            const reader = new FileReader();
+            reader.onload = function() {
+              const b64 = reader.result.split(',')[1];
+              sample.image = b64;
+              window.showAlertToast(sample);
+              try { showDesktopNotification(sample); } catch(e){}
+              playAlert();
+            };
+            reader.readAsDataURL(window.latestFaceBlob);
+      
+          // Server-side test: emit a socket alert by calling /test_alert
+          const emitServerAlertBtn = document.getElementById('emitServerAlertBtn');
+          if (emitServerAlertBtn) {
+            emitServerAlertBtn.addEventListener('click', async () => {
+              try {
+                const res = await fetch('/test_alert');
+                const j = await res.json().catch(()=>null);
+                console.log('/test_alert ->', j);
+                alert('Server test alert requested. Check debug overlay and notifications.');
+              } catch (e) { console.warn('emit test alert failed', e); alert('Request failed: ' + e); }
+            });
+          }
+
+          // Send push test from server (/send_push_test) which will attempt to send web-pushes to saved subscriptions
+          const sendPushTestBtn = document.getElementById('sendPushTestBtn');
+          if (sendPushTestBtn) {
+            sendPushTestBtn.addEventListener('click', async () => {
+              try {
+                const res = await fetch('/send_push_test', { method: 'POST' });
+                const j = await res.json().catch(()=>null);
+                console.log('/send_push_test ->', j);
+                if (j && j.success) {
+                  alert('Push test sent; see server logs for delivery errors and check OS notifications.');
+                } else {
+                  alert('Push test response: ' + JSON.stringify(j));
+                }
+              } catch (e) { console.warn('send_push_test failed', e); alert('Request failed: ' + e); }
+            });
+          }
+            window.showAlertToast(sample);
+            try { showDesktopNotification(sample); } catch(e){}
+            playAlert();
+          }
+        });
+      }
+
+      // Local notification test button (always available)
+      (function wireLocalNotifyTest(){
+        const btn = document.getElementById('showLocalNotifyBtn');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          try {
+            let b64 = null;
+            try {
+              if (window.latestFaceBlob) {
+                const toB64 = (blob) => new Promise((resolve) => { const r = new FileReader(); r.onload = ()=>resolve(r.result.split(',')[1]); r.readAsDataURL(blob); });
+                b64 = await toB64(window.latestFaceBlob);
+              }
+            } catch {}
+            const sampleData = { label: 'Unknown', image: b64, track_id: (window.latestTrackId || null) };
+            showDesktopNotification(sampleData);
+          } catch (e) { console.warn('local notify test failed', e); }
+        });
+      })();
+      
+    </script>
+    <!-- End scripts moved -->
+  </body>
+
+</html>

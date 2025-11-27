@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin - Dedupe Acks</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body class="p-3">
+    <div class="container">
+      <h3>Server-side Dedupe Acknowledgements</h3>
+      <p>These acknowledgements prevent operator clients from repeatedly prompting for the same person. You can clear entries individually or clear all.</p>
+      <div class="mb-2">
+        <button id="clearAllBtn" class="btn btn-danger btn-sm">Clear All</button>
+        <a href="/" class="btn btn-secondary btn-sm ms-2">Back</a>
+      </div>
+      <table class="table table-sm table-striped">
+        <thead><tr><th>ID</th><th>Camera</th><th>Track Key</th><th>Name</th><th>Timestamp</th><th>Actions</th></tr></thead>
+        <tbody id="acksBody"></tbody>
+      </table>
+    </div>
+
+    <script>
+      async function loadAcks(){
+        const res = await fetch('/api/dedupe');
+        const j = await res.json();
+        const body = document.getElementById('acksBody'); body.innerHTML='';
+        (j.acks||[]).forEach(a=>{
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${a.id}</td><td>${a.camera}</td><td>${a.track_key}</td><td>${a.name}</td><td>${new Date(a.ts*1000).toLocaleString()}</td><td><button data-id="${a.id}" class="btn btn-link btn-sm text-danger clearBtn">Clear</button></td>`;
+          body.appendChild(tr);
+        });
+        document.querySelectorAll('.clearBtn').forEach(b=>b.addEventListener('click', async (ev)=>{
+          const id = ev.currentTarget.getAttribute('data-id');
+          await fetch('/api/dedupe/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id: parseInt(id)})});
+          loadAcks();
+        }));
+      }
+      document.getElementById('clearAllBtn').addEventListener('click', async ()=>{ if(!confirm('Clear all ack entries?')) return; await fetch('/api/dedupe/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clear_all:true})}); loadAcks(); });
+      loadAcks();
+    </script>
+  </body>
+</html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin — Dedupe Acks</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body class="p-3">
+    <div class="container">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Server-side Dedupe Acknowledgements</h3>
+        <a href="/" class="btn btn-secondary btn-sm">Back</a>
+      </div>
+      <div class="mb-3">
+        <button id="refreshBtn" class="btn btn-primary btn-sm me-2">Refresh</button>
+        <button id="clearAllBtn" class="btn btn-danger btn-sm">Clear All Acks</button>
+      </div>
+      <div id="listArea"></div>
+    </div>
+
+    <script>
+      async function renderList() {
+        const res = await fetch('/api/dedupe_list');
+        const j = await res.json().catch(()=>null);
+        const area = document.getElementById('listArea');
+        if (!j || !j.success) { area.innerHTML = '<div class="alert alert-warning">Failed to load list</div>'; return; }
+        const rows = j.list || [];
+        if (!rows.length) { area.innerHTML = '<div class="alert alert-info">No ack records</div>'; return; }
+        let html = '<table class="table table-sm"><thead><tr><th>ID</th><th>Camera</th><th>Track Key</th><th>Name</th><th>TS</th><th></th></tr></thead><tbody>';
+        for (const r of rows) {
+          const d = new Date(r.ts * 1000).toLocaleString();
+          html += `<tr><td>${r.id}</td><td>${r.camera}</td><td>${r.track_key}</td><td>${r.name}</td><td>${d}</td><td><button class="btn btn-sm btn-danger" data-id="${r.id}">Delete</button></td></tr>`;
+        }
+        html += '</tbody></table>';
+        area.innerHTML = html;
+        // attach delete handlers
+        area.querySelectorAll('button[data-id]').forEach(btn=>btn.addEventListener('click', async (e)=>{
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Delete ack id ' + id + '?')) return;
+          await fetch('/api/dedupe_clear', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id: Number(id) }) });
+          renderList();
+        }));
+      }
+      document.getElementById('refreshBtn').addEventListener('click', renderList);
+      document.getElementById('clearAllBtn').addEventListener('click', async ()=>{ if (!confirm('Clear all ack records?')) return; await fetch('/api/dedupe_clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ clear_all: true }) }); renderList(); });
+      renderList();
+    </script>
+  </body>
+</html>
