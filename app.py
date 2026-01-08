@@ -577,8 +577,15 @@ def service_worker():
         return ('', 404)
 
 
-def retrain_classifier(device='cpu', method='knn'):
-    """Recompute embeddings from DB and train classifier. Runs in-process; safe to call in a background thread."""
+def retrain_classifier(device='cpu', method='knn', known_embeddings=None):
+    """Recompute embeddings from DB and train classifier. Runs in-process; safe to call in a background thread.
+    
+    Args:
+        device: Device to use for computing embeddings ('cpu' or 'cuda')
+        method: Classifier method ('knn' or 'svm')
+        known_embeddings: Optional dict mapping image_path to pre-computed embedding array.
+                         If provided, these embeddings are used instead of re-calculating.
+    """
     try:
         print('Starting retrain_classifier...')
         session = SessionLocal()
@@ -589,9 +596,15 @@ def retrain_classifier(device='cpu', method='knn'):
             return {'success': False, 'error': 'no faces'}
         embs = []
         labels = []
+        known_embeddings = known_embeddings or {}
         for f in faces:
             try:
-                emb = embedding_from_path(f.image_path, device=device)
+                # Use pre-computed embedding if available
+                if f.image_path in known_embeddings:
+                    emb = known_embeddings[f.image_path]
+                    print(f'retrain_classifier: using pre-computed embedding for {f.image_path}')
+                else:
+                    emb = embedding_from_path(f.image_path, device=device)
                 if emb is None:
                     continue
                 embs.append(emb)
@@ -1726,6 +1739,7 @@ def add_face():
     # If the client provided a track id, mark that track as recently alerted so the same ID
     # won't immediately re-alert while retraining completes. Then run a synchronous retrain
     # so the newly added face is available for recognition immediately.
+    computed_emb = None
     try:
         if track_id is not None:
             try:
@@ -1758,6 +1772,7 @@ def add_face():
                                 ft = f_tensors[0]
                                 try:
                                     emb_now = embedding_from_face_tensor(ft, device='cpu')
+                                    computed_emb = emb_now  # Store for passing to retrain
                                     trk.tracks[tid]['embedding'] = emb_now
                                     # add to recent cache so other tracks with different ids match immediately
                                     try:
@@ -1776,33 +1791,12 @@ def add_face():
             except Exception:
                 pass
         # run a blocking retrain: build embeddings from DB images (including the newly added one)
+        # Pass the computed embedding to avoid re-calculation issues with cropped images
         try:
-            session = SessionLocal()
-            faces = session.query(Face).all()
-            session.close()
-            embs = []
-            labels = []
-            for f in faces:
-                try:
-                    emb = embedding_from_path(f.image_path, device='cpu')
-                    if emb is None:
-                        print('add_face: no embedding for', f.image_path)
-                        continue
-                    embs.append(emb)
-                    labels.append(f.name)
-                except Exception as e:
-                    print('add_face: failed to extract embedding for', f.image_path, e)
-                    continue
-            if not embs:
-                retr_res = {'success': False, 'error': 'no embeddings'}
-            else:
-                embs = np.stack(embs, axis=0)
-                from model_utils import train_knn
-                n_neighbors = min(3, embs.shape[0])
-                obj = train_knn(embs, labels, n_neighbors=n_neighbors)
-                retr_res = {'success': True, 'method': obj.get('method') if isinstance(obj, dict) else 'knn'}
+            known_embeddings = {image_path: computed_emb} if computed_emb is not None else {}
+            retr_res = retrain_classifier(device='cpu', method='knn', known_embeddings=known_embeddings)
         except Exception as e:
-            print('add_face retrain inner failed', e)
+            print('add_face retrain failed', e)
             retr_res = {'success': False, 'error': str(e)}
     except Exception as e:
         print('add_face retrain failed', e)
@@ -1929,9 +1923,11 @@ def upload_face_from_file():
         session.close()
 
         retrain_info = None
+        # Pass the computed embedding to avoid re-calculation issues
+        known_embeddings = {emb_path: emb}
         retrain_info = persist_and_update_classifier(emb, name)
         if not retrain_info or not retrain_info.get('success'):
-            retrain_info = retrain_classifier(device='cpu', method='knn')
+            retrain_info = retrain_classifier(device='cpu', method='knn', known_embeddings=known_embeddings)
 
         try:
             socketio.emit('face_added', {'name': name, 'camera': 'upload', 'track_id': None}, namespace='/alerts')
@@ -2084,6 +2080,7 @@ def add_face_from_alert():
             return jsonify({'success': False, 'error': f'failed to insert Face: {e}'}), 500
 
         # compute embedding for this face and add to recent cache + persisted embeddings
+        computed_emb = None
         try:
             img = Image.open(path).convert('RGB')
             f_tensors = detect_and_align(img, device='cpu')
@@ -2097,6 +2094,7 @@ def add_face_from_alert():
             if f_tensors:
                 ft = f_tensors[0]
                 emb = embedding_from_face_tensor(ft, device='cpu')
+                computed_emb = emb  # Store for passing to retrain
                 try:
                     add_recent_embedding(emb, name)
                 except Exception:
@@ -2109,8 +2107,10 @@ def add_face_from_alert():
             pass
 
         # run a blocking retrain to ensure classifier is updated for all DB images
+        # Pass the computed embedding to avoid re-calculation issues with cropped images
         try:
-            retr_res = retrain_classifier(device='cpu', method='knn')
+            known_embeddings = {path: computed_emb} if computed_emb is not None else {}
+            retr_res = retrain_classifier(device='cpu', method='knn', known_embeddings=known_embeddings)
         except Exception as e:
             retr_res = {'success': False, 'error': str(e)}
 
