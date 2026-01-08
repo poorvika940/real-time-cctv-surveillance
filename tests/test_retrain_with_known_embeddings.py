@@ -88,7 +88,7 @@ def test_retrain_classifier_uses_known_embeddings(tmp_path, monkeypatch):
     assert img_path_2 in embedding_from_path_called['paths']
     
     # Both should succeed
-    assert result2['success'] == True
+    assert result2['success']
     assert result2['method'] == 'knn'
     
     # Cleanup
@@ -136,7 +136,7 @@ def test_retrain_classifier_known_embeddings_priority(tmp_path, monkeypatch):
     known_embeddings = {img_path: expected_emb}
     result = retrain_classifier(device='cpu', method='knn', known_embeddings=known_embeddings)
     
-    assert result['success'] == True
+    assert result['success']
     
     # Cleanup
     session = SessionLocal()

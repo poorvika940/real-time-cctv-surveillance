@@ -583,8 +583,10 @@ def retrain_classifier(device='cpu', method='knn', known_embeddings=None):
     Args:
         device: Device to use for computing embeddings ('cpu' or 'cuda')
         method: Classifier method ('knn' or 'svm')
-        known_embeddings: Optional dict mapping image_path to pre-computed embedding array.
+        known_embeddings: Optional dict mapping image_path (str) to pre-computed embedding (numpy.ndarray).
+                         Embeddings should be 1D arrays of float values, typically shape (512,).
                          If provided, these embeddings are used instead of re-calculating.
+                         Invalid embeddings (None or wrong type) will fallback to embedding_from_path.
     """
     try:
         print('Starting retrain_classifier...')
@@ -599,12 +601,21 @@ def retrain_classifier(device='cpu', method='knn', known_embeddings=None):
         known_embeddings = known_embeddings or {}
         for f in faces:
             try:
-                # Use pre-computed embedding if available
+                # Use pre-computed embedding if available and valid
+                emb = None
                 if f.image_path in known_embeddings:
-                    emb = known_embeddings[f.image_path]
-                    print(f'retrain_classifier: using pre-computed embedding for {f.image_path}')
-                else:
+                    precomputed = known_embeddings[f.image_path]
+                    # Validate the pre-computed embedding
+                    if precomputed is not None and isinstance(precomputed, np.ndarray):
+                        emb = precomputed
+                        print(f'retrain_classifier: using pre-computed embedding for {f.image_path}')
+                    else:
+                        print(f'retrain_classifier: invalid pre-computed embedding for {f.image_path}, falling back')
+                
+                # Fallback to embedding_from_path if no valid pre-computed embedding
+                if emb is None:
                     emb = embedding_from_path(f.image_path, device=device)
+                
                 if emb is None:
                     continue
                 embs.append(emb)
